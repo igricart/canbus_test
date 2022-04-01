@@ -7,35 +7,31 @@ find_package(catkin REQUIRED COMPONENTS
   kacanopen)
 
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES canbus_test
   CATKIN_DEPENDS kacanopen
-#  DEPENDS system_lib
 )
 
 include_directories(
-# include
   ${catkin_INCLUDE_DIRS}
 )
 
-add_executable(${PROJECT_NAME}_slave src/slave.cpp)
-target_link_libraries(${PROJECT_NAME}_slave
+set(lely_DEPENDENCIES
   lely-coapp
   lely-util
   lely-io2
   lely-ev
 )
 
-add_executable(${PROJECT_NAME}_master src/master.cpp)
-target_link_libraries(${PROJECT_NAME}_master
-  lely-coapp
-  lely-util
-  lely-io2
-  lely-ev
+add_executable(lely-slave src/lely-slave.cpp)
+target_link_libraries(lely-slave
+  ${lely_DEPENDENCIES}
+)
+
+add_executable(lely-master src/lely-master.cpp)
+target_link_libraries(lely-master
+  ${lely_DEPENDENCIES}
 )
 
 add_executable(${PROJECT_NAME}_communicate src/communicate.cpp)
-
 target_link_libraries (${PROJECT_NAME}_communicate
     ${catkin_LIBRARIES}
 )

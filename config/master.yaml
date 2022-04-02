@@ -1,0 +1,3 @@
+node_id: 2
+busname: "vcan0"
+baudrate: "1M"

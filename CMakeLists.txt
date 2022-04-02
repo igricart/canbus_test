@@ -31,9 +31,9 @@ target_link_libraries(lely-master
   ${lely_DEPENDENCIES}
 )
 
-add_executable(${PROJECT_NAME}_communicate src/communicate.cpp)
-target_link_libraries (${PROJECT_NAME}_communicate
+add_executable(master_can src/master_can.cpp)
+target_link_libraries (master_can
     ${catkin_LIBRARIES}
 )
 
-add_dependencies(${PROJECT_NAME}_communicate ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(master_can ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})

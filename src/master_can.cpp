@@ -1,3 +1,4 @@
+#include <ros/package.h>
 #include <ros/ros.h>
 
 #include <bitset>
@@ -28,7 +29,8 @@ class MasterCANInterface {
   /* data */
   std::string busname_;
   std::string baudrate_;
-  int node_id_;
+  int sample_rate_;  // Loop cycle time (ms)
+  int node_id_;      // Node ID from PLC
   std::vector<std::unique_ptr<kaco::Device>> m_devices_;
   kaco::Core core_;
   ros::NodeHandle nh_;
@@ -41,6 +43,7 @@ MasterCANInterface::MasterCANInterface(ros::NodeHandle& nh)
   pnh_.param<int>("node_id", node_id_, 2);
   pnh_.param<std::string>("busname", busname_, "can0");
   pnh_.param<std::string>("baudrate", baudrate_, "1M");
+  pnh_.param<int>("sample_rate", sample_rate_, 100);
 };
 
 MasterCANInterface::~MasterCANInterface(){};
@@ -60,6 +63,11 @@ class MasterCAN : public MasterCANInterface {
   void connect_node() final;
   size_t get_devices_vec_size();
   void get_device_info();
+  void create_pdo_mapping();
+  void read();
+  void send(u_int8_t i);
+  void communicate();
+  u_int8_t value_;
 };
 
 MasterCAN::MasterCAN(ros::NodeHandle& nh) : MasterCANInterface(nh) {}
@@ -97,8 +105,8 @@ size_t MasterCAN::get_devices_vec_size() { return m_devices_.size(); }
 void MasterCAN::get_device_info() {
   std::cout << "Load EDS file." << std::endl;
   m_devices_[0]->load_dictionary_from_eds(
-      "/home/igricart/Documents/ps/tmp/canbus/src/canbus_test/resources/"
-      "Assisted Docking PC - Master.eds");
+      ros::package::getPath("canbus_test") +
+      "/resources/Assisted Docking PC - Master.eds");
   std::cout << "Starting device with ID " << (unsigned)node_id_ << "..."
             << std::endl;
   m_devices_[0]->start();
@@ -118,6 +126,55 @@ void MasterCAN::get_device_info() {
                "(however, the entries are not mandatory)."
             << std::endl;
   m_devices_[0]->print_dictionary();
+}
+
+void MasterCAN::create_pdo_mapping() {
+  // Receiver Ports
+  m_devices_[0]->add_receive_pdo_mapping(
+      0x180 + node_id_, "Digital_Inputs5_1/Digital_Inputs5_1", 0);
+
+  // Transmission Ports
+  m_devices_[0]->add_transmit_pdo_mapping(
+      0x200 + node_id_, {{"digital_outputs1_1/digital_outputs1_1", 0}},
+      kaco::TransmissionType::ON_CHANGE, std::chrono::milliseconds(20));
+
+  // Sleep required to setup the communication
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+void MasterCAN::read() {
+  value_ =
+      m_devices_[0]->get_entry("Digital_Inputs5_1/Digital_Inputs5_1",
+                               kaco::ReadAccessMethod::pdo_request_and_wait);
+  std::cout << "value = " << value_ << std::endl;
+}
+
+void MasterCAN::send(u_int8_t i) {
+  std::cout << "Sending: " << i << std::endl;
+  m_devices_[0]->set_entry("digital_outputs1_1/digital_outputs1_1",
+                           static_cast<u_int8_t>(i),
+                           kaco::WriteAccessMethod::pdo);
+}
+
+void MasterCAN::communicate() {
+  bool running = true;
+  u_int8_t i = 0;
+  auto sent_msg = ros::Time::now();
+  while (running) {
+    try {
+      this->read();
+      this->send(i);
+      if (this->value_ == i) {
+        std::cout << "Response time: " << ros::Time::now() - sent_msg;
+        sent_msg = ros::Time::now();
+      }
+      ++i;
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(this->sample_rate_));
+    } catch (const std::exception& e) {
+      std::cerr << e.what() << '\n';
+    }
+  }
 }
 
 /**
@@ -140,6 +197,7 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
   std::cout << "Connected to: " << master.get_devices_vec_size() << std::endl;
-
+  master.create_pdo_mapping();
+  master.communicate();
   return 0;
 }

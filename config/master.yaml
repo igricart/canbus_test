@@ -1,4 +1,5 @@
-node_id: 2
-busname: "vcan0"
+node_id: 33
+busname: "can0"
 baudrate: "1M"
-eds_file: "master.dcf"
+eds_file: "PC - Master.eds"
+sample_rate: 20

@@ -32,6 +32,7 @@ class MasterCANInterface {
   int sample_rate_;  // Loop cycle time (ms)
   int node_id_;      // Node ID from PLC
   std::vector<std::unique_ptr<kaco::Device>> m_devices_;
+  std::unordered_map<uint16_t, std::string> pdo_input_map, pdo_output_map;
   kaco::Core core_;
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
@@ -131,7 +132,13 @@ void MasterCAN::get_device_info() {
 void MasterCAN::create_pdo_mapping() {
   // Receiver Ports
   m_devices_[0]->add_receive_pdo_mapping(
-      0x180 + node_id_, "Digital_Inputs5_1/Digital_Inputs5_1", 0);
+      0x1A1, "Digital_Inputs1_1/Digital_Inputs1_1", 0);
+
+  m_devices_[0]->add_receive_pdo_mapping(
+      0x2A1, "Digital_Inputs2_1/Digital_Inputs2_1", 0);
+
+  m_devices_[0]->add_receive_pdo_mapping(
+      0x4A2, "Digital_Inputs5_1/Digital_Inputs5_1", 0);
 
   // Transmission Ports
   m_devices_[0]->add_transmit_pdo_mapping(
@@ -139,14 +146,36 @@ void MasterCAN::create_pdo_mapping() {
       kaco::TransmissionType::ON_CHANGE, std::chrono::milliseconds(20));
 
   // Sleep required to setup the communication
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 }
 
 void MasterCAN::read() {
-  value_ =
-      m_devices_[0]->get_entry("Digital_Inputs5_1/Digital_Inputs5_1",
-                               kaco::ReadAccessMethod::pdo_request_and_wait);
-  std::cout << "value = " << value_ << std::endl;
+  try {
+    auto value_1 =
+        m_devices_[0]->get_entry("Digital_Inputs1_1/Digital_Inputs1_1",
+                                 kaco::ReadAccessMethod::pdo_request_and_wait);
+    std::cout << "value_1 = " << value_1 << std::endl;
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+  }
+
+  try {
+    auto value_2 =
+        m_devices_[0]->get_entry("Digital_Inputs2_1/Digital_Inputs2_1",
+                                 kaco::ReadAccessMethod::pdo_request_and_wait);
+    std::cout << "value_2 = " << value_2 << std::endl;
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+  }
+
+  try {
+    auto value_5 =
+        m_devices_[0]->get_entry("Digital_Inputs5_1/Digital_Inputs5_1",
+                                 kaco::ReadAccessMethod::pdo_request_and_wait);
+    std::cout << "value_5 = " << value_5 << std::endl;
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+  }
 }
 
 void MasterCAN::send(u_int8_t i) {
@@ -161,19 +190,11 @@ void MasterCAN::communicate() {
   u_int8_t i = 0;
   auto sent_msg = ros::Time::now();
   while (running) {
-    try {
-      this->read();
-      this->send(i);
-      if (this->value_ == i) {
-        std::cout << "Response time: " << ros::Time::now() - sent_msg;
-        sent_msg = ros::Time::now();
-      }
-      ++i;
-      std::this_thread::sleep_for(
-          std::chrono::milliseconds(this->sample_rate_));
-    } catch (const std::exception& e) {
-      std::cerr << e.what() << '\n';
-    }
+    this->send(i);
+    this->read();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(this->sample_rate_));
+    ++i;
   }
 }
 

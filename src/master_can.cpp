@@ -37,6 +37,7 @@ class MasterCANInterface {
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
   std::bitset<265> m_device_alive_;
+  int heartbeat_interval_;
 };
 
 MasterCANInterface::MasterCANInterface(ros::NodeHandle& nh)
@@ -45,6 +46,7 @@ MasterCANInterface::MasterCANInterface(ros::NodeHandle& nh)
   pnh_.param<std::string>("busname", busname_, "can0");
   pnh_.param<std::string>("baudrate", baudrate_, "1M");
   pnh_.param<int>("sample_rate", sample_rate_, 100);
+  pnh_.param<int>("heartbeat_interval", heartbeat_interval_, 250);
 };
 
 MasterCANInterface::~MasterCANInterface(){};
@@ -64,11 +66,12 @@ class MasterCAN : public MasterCANInterface {
   void connect_node() final;
   size_t get_devices_vec_size();
   void get_device_info();
-  void create_pdo_mapping();
+  bool create_pdo_mapping();
   void read();
   void send(u_int8_t i);
   void communicate();
   u_int8_t value_;
+  std::mutex device_mutex_;
 };
 
 MasterCAN::MasterCAN(ros::NodeHandle& nh) : MasterCANInterface(nh) {}
@@ -85,6 +88,8 @@ bool MasterCAN::start() {
 
 void MasterCAN::setup_node() {
   auto device_alive_callback = [&](const int node_id) {
+    std::lock_guard<std::mutex> lock(device_mutex_);
+    std::cout << "Device Alive Callback" << std::endl;
     if (!m_device_alive_.test(node_id)) {
       m_device_alive_.set(node_id);
       m_devices_.emplace_back(new kaco::Device(core_, node_id));
@@ -92,8 +97,23 @@ void MasterCAN::setup_node() {
     } else {
       WARN("Device with node ID " << node_id << " already exists. Ignoring...");
     }
+    m_devices_[0]->set_entry(0x1017, 0x0, heartbeat_interval_,
+                             kaco::WriteAccessMethod::sdo);
   };
+
+  auto device_dead_callback = [&](const uint8_t node_id) {
+    std::lock_guard<std::mutex> lock(device_mutex_);
+    std::cout << "Device Dead Callback" << std::endl;
+    // Check whether we already have this node_id
+    for (auto it = m_devices_.begin(); it != m_devices_.end();) {
+      if ((*it)->get_node_id() == node_id)
+        // Remove the device map entry for this node_id
+        m_devices_.erase(it);
+    }
+  };
+
   core_.nmt.register_device_alive_callback(device_alive_callback);
+  core_.nmt.register_device_dead_callback(device_dead_callback);
 }
 
 void MasterCAN::connect_node() {
@@ -104,6 +124,9 @@ void MasterCAN::connect_node() {
 size_t MasterCAN::get_devices_vec_size() { return m_devices_.size(); }
 
 void MasterCAN::get_device_info() {
+  if (m_devices_.empty()) {
+    return;
+  }
   std::cout << "Load EDS file." << std::endl;
   m_devices_[0]->load_dictionary_from_eds(
       ros::package::getPath("canbus_test") +
@@ -129,27 +152,39 @@ void MasterCAN::get_device_info() {
   m_devices_[0]->print_dictionary();
 }
 
-void MasterCAN::create_pdo_mapping() {
+bool MasterCAN::create_pdo_mapping() {
+  if (m_devices_.empty()) {
+    return false;
+  }
   // Receiver Ports
-  m_devices_[0]->add_receive_pdo_mapping(
-      0x1A1, "Digital_Inputs1_1/Digital_Inputs1_1", 0);
+  try {
+    m_devices_[0]->add_receive_pdo_mapping(
+        0x1A1, "Digital_Inputs1_1/Digital_Inputs1_1", 0);
 
-  m_devices_[0]->add_receive_pdo_mapping(
-      0x2A1, "Digital_Inputs2_1/Digital_Inputs2_1", 0);
+    m_devices_[0]->add_receive_pdo_mapping(
+        0x2A1, "Digital_Inputs2_1/Digital_Inputs2_1", 0);
 
-  m_devices_[0]->add_receive_pdo_mapping(
-      0x4A2, "Digital_Inputs5_1/Digital_Inputs5_1", 0);
+    m_devices_[0]->add_receive_pdo_mapping(
+        0x4A2, "Digital_Inputs5_1/Digital_Inputs5_1", 0);
 
-  // Transmission Ports
-  m_devices_[0]->add_transmit_pdo_mapping(
-      0x200 + node_id_, {{"digital_outputs1_1/digital_outputs1_1", 0}},
-      kaco::TransmissionType::ON_CHANGE, std::chrono::milliseconds(20));
+    // Transmission Ports
+    m_devices_[0]->add_transmit_pdo_mapping(
+        0x200 + node_id_, {{"digital_outputs1_1/digital_outputs1_1", 0}},
+        kaco::TransmissionType::ON_CHANGE, std::chrono::milliseconds(20));
 
-  // Sleep required to setup the communication
-  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Sleep required to setup the communication
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    return true;
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << '\n';
+    return false;
+  }
 }
 
 void MasterCAN::read() {
+  if (m_devices_.empty()) {
+    return;
+  }
   try {
     auto value_1 =
         m_devices_[0]->get_entry("Digital_Inputs1_1/Digital_Inputs1_1",
@@ -179,6 +214,9 @@ void MasterCAN::read() {
 }
 
 void MasterCAN::send(u_int8_t i) {
+  if (m_devices_.empty()) {
+    return;
+  }
   std::cout << "Sending: " << i << std::endl;
   m_devices_[0]->set_entry("digital_outputs1_1/digital_outputs1_1",
                            static_cast<u_int8_t>(i),
@@ -186,6 +224,7 @@ void MasterCAN::send(u_int8_t i) {
 }
 
 void MasterCAN::communicate() {
+  std::lock_guard<std::mutex> lock(device_mutex_);
   bool running = true;
   u_int8_t i = 0;
   auto sent_msg = ros::Time::now();
@@ -211,13 +250,17 @@ int main(int argc, char** argv) {
   master.start();
   master.setup_node();
   master.connect_node();
-  master.get_device_info();
 
   while (!master.get_devices_vec_size()) {
     std::cout << "No devices found, waiting 1 second" << std::endl;
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
   std::cout << "Connected to: " << master.get_devices_vec_size() << std::endl;
+
+  while (!master.create_pdo_mapping()) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+
   master.create_pdo_mapping();
   master.communicate();
   return 0;

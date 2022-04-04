@@ -1,3 +1,4 @@
 node_id: 2
 busname: "vcan0"
 baudrate: "1M"
+eds_file: "master.dcf"

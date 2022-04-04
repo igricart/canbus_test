@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <thread>
 
+#include "kacanopen/core/canopen_error.h"
 #include "kacanopen/core/core.h"
 #include "kacanopen/core/logger.h"
 #include "kacanopen/master/device.h"
@@ -58,6 +59,7 @@ class MasterCAN : public MasterCANInterface {
   void setup_node() final;
   void connect_node() final;
   size_t get_devices_vec_size();
+  void get_device_info();
 };
 
 MasterCAN::MasterCAN(ros::NodeHandle& nh) : MasterCANInterface(nh) {}
@@ -92,6 +94,32 @@ void MasterCAN::connect_node() {
 
 size_t MasterCAN::get_devices_vec_size() { return m_devices_.size(); }
 
+void MasterCAN::get_device_info() {
+  std::cout << "Load EDS file." << std::endl;
+  m_devices_[0]->load_dictionary_from_eds(
+      "/home/igricart/Documents/ps/tmp/canbus/src/canbus_test/resources/"
+      "Assisted Docking PC - Master.eds");
+  std::cout << "Starting device with ID " << (unsigned)node_id_ << "..."
+            << std::endl;
+  m_devices_[0]->start();
+  std::cout << "Loading object dictionary from the library. This can be either "
+               "a generic CiA-301"
+            << " dictionary, a CiA-profile specific dictionary, or a "
+               "manufacturer./device-specific dictionary."
+            << std::endl;
+  std::cout << "The following should work for all CANopen-compliant devices."
+            << std::endl;
+  std::cout << "CiA-profile = " << m_devices_[0]->get_device_profile_number()
+            << std::endl;
+  std::cout << "Vendor-ID = "
+            << m_devices_[0]->get_entry("Identity object/Vendor-ID")
+            << std::endl;
+  std::cout << "The following works for most CANopen-compliant devices "
+               "(however, the entries are not mandatory)."
+            << std::endl;
+  m_devices_[0]->print_dictionary();
+}
+
 /**
  * @brief Main Process
  *
@@ -105,11 +133,13 @@ int main(int argc, char** argv) {
   master.start();
   master.setup_node();
   master.connect_node();
+  master.get_device_info();
 
   while (!master.get_devices_vec_size()) {
     std::cout << "No devices found, waiting 1 second" << std::endl;
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
   std::cout << "Connected to: " << master.get_devices_vec_size() << std::endl;
+
   return 0;
 }

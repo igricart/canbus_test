@@ -1,5 +1,5 @@
 <launch>
-  <node pkg="canbus_test" type="master_can" name="master_can" output="screen">
+  <node pkg="canbus_test" type="canbus_test_node" name="canbus_test_node" output="screen">
     <rosparam file="$(find canbus_test)/config/master.yaml" />
   </node>
 </launch>

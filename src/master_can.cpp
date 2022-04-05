@@ -24,24 +24,31 @@ class MasterCANInterface {
   bool virtual start() = 0;
   void virtual setup_node() = 0;
   void virtual connect_node() = 0;
+  bool connected() { return connected_; };
 
  protected:
-  /* data */
+  // Ros
+  ros::NodeHandle nh_;
+  ros::NodeHandle pnh_;
+
+  // Params
   std::string busname_;
   std::string baudrate_;
   int sample_rate_;  // Loop cycle time (ms)
   int node_id_;      // Node ID from PLC
+  int heartbeat_interval_;
+
+  // Kacanopen
   std::unique_ptr<kaco::Device> device_;
   std::unordered_map<uint16_t, std::string> pdo_input_map, pdo_output_map;
   kaco::Core core_;
-  ros::NodeHandle nh_;
-  ros::NodeHandle pnh_;
-  std::bitset<265> m_device_alive_;
-  int heartbeat_interval_;
+
+  // States
+  bool connected_;
 };
 
 MasterCANInterface::MasterCANInterface(ros::NodeHandle& nh)
-    : nh_(nh), pnh_("~") {
+    : nh_(nh), pnh_("~"), connected_(false) {
   pnh_.param<int>("node_id", node_id_, 2);
   pnh_.param<std::string>("busname", busname_, "can0");
   pnh_.param<std::string>("baudrate", baudrate_, "1M");
@@ -88,29 +95,57 @@ bool MasterCAN::start() {
 
 void MasterCAN::setup_node() {
   std::cout << "Setup Node" << std::endl;
-  auto device_alive_callback = [&](const int node_id) {
-    std::lock_guard<std::mutex> lock(device_mutex_);
-    std::cout << "Device Alive Callback" << std::endl;
-    if (!m_device_alive_.test(node_id)) {
-      m_device_alive_.set(node_id);
-      device_ = std::make_unique<kaco::Device>(core_, node_id);
-      std::cout << "New node added" << std::endl;
-    } else {
-      WARN("Device with node ID " << node_id << " already exists. Ignoring...");
-    }
-
-    device_->set_entry(0x1017, 0x0, heartbeat_interval_,
-                       kaco::WriteAccessMethod::sdo);
-  };
 
   auto device_dead_callback = [&](const uint8_t node_id) {
     std::lock_guard<std::mutex> lock(device_mutex_);
     std::cout << "Device Dead Callback" << std::endl;
     // Check whether we already have this node_id
+    if ((node_id == this->node_id_) && (connected_)) {
+      try {
+        device_.reset();
+        connected_ = false;
+        /* code */
+      } catch (const std::exception& e) {
+        std::cerr << e.what() << '\n';
+      }
+    }
+  };
+
+  auto device_alive_callback = [&](const int node_id) {
+    std::lock_guard<std::mutex> lock(device_mutex_);
+    std::cout << "Device Alive Callback" << std::endl;
+    if ((node_id == this->node_id_) && (!connected_)) {
+      try {
+        core_.nmt.send_nmt_message(node_id_,
+                                   kaco::NMT::Command::enter_preoperational);
+        device_ = std::make_unique<kaco::Device>(core_, node_id);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        device_->load_dictionary_from_eds(
+            ros::package::getPath("canbus_test") +
+            "/resources/Assisted Docking PC - Master.eds");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::cout << "Starting Node with ID " << (unsigned)node_id_ << "..."
+                  << std::endl;
+        device_->start();
+        core_.nmt.register_device_dead_callback(device_dead_callback);
+        create_pdo_mapping();
+        core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::start_node);
+        connected_ = true;
+        device_->set_entry(0x1017, 0x0, heartbeat_interval_,
+                           kaco::WriteAccessMethod::sdo);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::cout << "New node started" << std::endl;
+      } catch (const std::exception& e) {
+        std::cerr << e.what() << '\n';
+      }
+    }
+
+    else {
+      WARN("Device with node ID " << node_id << " already exists. Ignoring...");
+    }
   };
 
   core_.nmt.register_device_alive_callback(device_alive_callback);
-  core_.nmt.register_device_dead_callback(device_dead_callback);
 }
 
 void MasterCAN::connect_node() {
@@ -123,12 +158,6 @@ void MasterCAN::get_device_info() {
     return;
   }
   std::cout << "Load EDS file." << std::endl;
-  device_->load_dictionary_from_eds(
-      ros::package::getPath("canbus_test") +
-      "/resources/Assisted Docking PC - Master.eds");
-  std::cout << "Starting device with ID " << (unsigned)node_id_ << "..."
-            << std::endl;
-  device_->start();
   std::cout << "Loading object dictionary from the library. This can be either "
                "a generic CiA-301"
             << " dictionary, a CiA-profile specific dictionary, or a "
@@ -249,11 +278,11 @@ int main(int argc, char** argv) {
   //   std::this_thread::sleep_for(std::chrono::seconds(1));
   // }
 
-  while (!master.create_pdo_mapping()) {
+  while (!master.connected()) {
+    std::cout << "Master not conneceted to device. " << std::endl;
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 
-  master.create_pdo_mapping();
   master.communicate();
   return 0;
 }

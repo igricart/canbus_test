@@ -2,4 +2,4 @@ node_id: 33
 busname: "can0"
 baudrate: "1M"
 eds_file: "PC - Master.eds"
-sample_rate: 20
+sample_rate: 1000

@@ -14,7 +14,6 @@
  *
  */
 class MasterCAN : public MasterCANInterface {
- private:
  public:
   MasterCAN(ros::NodeHandle& nh);
   ~MasterCAN();
@@ -29,6 +28,9 @@ class MasterCAN : public MasterCANInterface {
   void communicate();
   u_int8_t value_;
   std::mutex device_mutex_;
+
+ private:
+  void configure_node(int node_id);
 };
 
 MasterCAN::MasterCAN(ros::NodeHandle& nh) : MasterCANInterface(nh) {}
@@ -47,7 +49,7 @@ bool MasterCAN::start() {
 void MasterCAN::setup_node() {
   std::cout << "Setup Node" << std::endl;
 
-  auto device_dead_callback = [&](const uint8_t node_id) {
+  auto device_dead_callback = [this](const uint8_t node_id) {
     std::lock_guard<std::mutex> lock(device_mutex_);
     std::cout << "Device Dead Callback" << std::endl;
     // Check whether we already have this node_id
@@ -62,30 +64,13 @@ void MasterCAN::setup_node() {
     }
   };
 
-  auto device_alive_callback = [&](const int node_id) {
+  auto device_alive_callback = [this, device_dead_callback](const int node_id) {
     std::lock_guard<std::mutex> lock(device_mutex_);
     std::cout << "Device Alive Callback" << std::endl;
     if ((node_id == this->node_id_) && (!connected_)) {
       try {
-        core_.nmt.send_nmt_message(node_id_,
-                                   kaco::NMT::Command::enter_preoperational);
-        device_ = std::make_unique<kaco::Device>(core_, node_id);
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        device_->load_dictionary_from_eds(
-            ros::package::getPath("canbus_test") +
-            "/resources/Assisted Docking PC - Master.eds");
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        std::cout << "Starting Node with ID " << (unsigned)node_id_ << "..."
-                  << std::endl;
-        device_->start();
+        configure_node(node_id);
         core_.nmt.register_device_dead_callback(device_dead_callback);
-        create_pdo_mapping();
-        core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::start_node);
-        connected_ = true;
-        device_->set_entry(0x1017, 0x0, heartbeat_interval_,
-                           kaco::WriteAccessMethod::sdo);
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        std::cout << "New node started" << std::endl;
       } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
       }
@@ -99,6 +84,27 @@ void MasterCAN::setup_node() {
   core_.nmt.register_device_alive_callback(device_alive_callback);
 }
 
+void MasterCAN::configure_node(int node_id) {
+  core_.nmt.send_nmt_message(node_id_,
+                             kaco::NMT::Command::enter_preoperational);
+  device_ = std::make_unique<kaco::Device>(core_, node_id);
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  device_->load_dictionary_from_eds(
+      ros::package::getPath("canbus_test") +
+      "/resources/Assisted Docking PC - Master.eds");
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::cout << "Starting Node with ID " << (unsigned)node_id_ << "..."
+            << std::endl;
+  device_->start();
+  create_pdo_mapping();
+  core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::start_node);
+  connected_ = true;
+  device_->set_entry(0x1017, 0x0, heartbeat_interval_,
+                     kaco::WriteAccessMethod::sdo);
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::cout << "New node started" << std::endl;
+}
+
 void MasterCAN::connect_node() {
   core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::reset_node);
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -106,6 +112,8 @@ void MasterCAN::connect_node() {
 
 void MasterCAN::get_device_info() {
   if (!device_) {
+    std::cout << "No device found, skipping function: get_device_info"
+              << std::endl;
     return;
   }
   std::cout << "Load EDS file." << std::endl;
@@ -136,12 +144,6 @@ bool MasterCAN::create_pdo_mapping() {
     device_->add_receive_pdo_mapping(0x1A1,
                                      "Digital_Inputs1_1/Digital_Inputs1_1", 0);
 
-    device_->add_receive_pdo_mapping(0x2A1,
-                                     "Digital_Inputs2_1/Digital_Inputs2_1", 0);
-
-    device_->add_receive_pdo_mapping(0x4A2,
-                                     "Digital_Inputs5_1/Digital_Inputs5_1", 0);
-
     // Transmission Ports
     device_->add_transmit_pdo_mapping(
         0x200 + node_id_, {{"digital_outputs1_1/digital_outputs1_1", 0}},
@@ -158,6 +160,7 @@ bool MasterCAN::create_pdo_mapping() {
 
 void MasterCAN::read() {
   if (!device_) {
+    std::cout << "No device found, skipping function: read()" << std::endl;
     return;
   }
   try {
@@ -168,28 +171,11 @@ void MasterCAN::read() {
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
   }
-
-  try {
-    auto value_2 =
-        device_->get_entry("Digital_Inputs2_1/Digital_Inputs2_1",
-                           kaco::ReadAccessMethod::pdo_request_and_wait);
-    std::cout << "value_2 = " << value_2 << std::endl;
-  } catch (const std::exception& e) {
-    std::cerr << e.what() << '\n';
-  }
-
-  try {
-    auto value_5 =
-        device_->get_entry("Digital_Inputs5_1/Digital_Inputs5_1",
-                           kaco::ReadAccessMethod::pdo_request_and_wait);
-    std::cout << "value_5 = " << value_5 << std::endl;
-  } catch (const std::exception& e) {
-    std::cerr << e.what() << '\n';
-  }
 }
 
 void MasterCAN::send(u_int8_t i) {
   if (!device_) {
+    std::cout << "No device found, skipping function: send()" << std::endl;
     return;
   }
   std::cout << "Sending: " << i << std::endl;

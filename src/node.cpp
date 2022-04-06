@@ -7,7 +7,7 @@ int main(int argc, char** argv) {
 
   master.start();
   master.setup_node();
-  master.connect_node();
+  // master.reset_node();
 
   while (!master.connected()) {
     std::cout << "Master not conneceted to device. " << std::endl;

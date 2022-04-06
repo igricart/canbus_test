@@ -16,7 +16,7 @@ class MasterCANInterface {
 
   bool virtual start() = 0;
   void virtual setup_node() = 0;
-  void virtual connect_node() = 0;
+  void virtual reset_node() = 0;
   bool connected() { return connected_; };
 
  protected:

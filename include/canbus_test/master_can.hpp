@@ -20,7 +20,7 @@ class MasterCAN : public MasterCANInterface {
 
   bool start() final;
   void setup_node() final;
-  void connect_node() final;
+  void reset_node() final;
   void get_device_info();
   bool create_pdo_mapping();
   void read();
@@ -35,7 +35,7 @@ class MasterCAN : public MasterCANInterface {
 
 MasterCAN::MasterCAN(ros::NodeHandle& nh) : MasterCANInterface(nh) {}
 
-MasterCAN::~MasterCAN() {}
+MasterCAN::~MasterCAN() { std::cout << "Killing Master Node" << std::endl; }
 
 bool MasterCAN::start() {
   std::cout << "Start Core" << std::endl;
@@ -88,24 +88,23 @@ void MasterCAN::configure_node(int node_id) {
   core_.nmt.send_nmt_message(node_id_,
                              kaco::NMT::Command::enter_preoperational);
   device_ = std::make_unique<kaco::Device>(core_, node_id);
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  device_->load_dictionary_from_eds(
-      ros::package::getPath("canbus_test") +
-      "/resources/Assisted Docking PC - Master.eds");
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  device_->load_dictionary_from_eds(ros::package::getPath("canbus_test") +
+                                    "/resources/PC - Master.eds");
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
   std::cout << "Starting Node with ID " << (unsigned)node_id_ << "..."
             << std::endl;
   device_->start();
   create_pdo_mapping();
-  core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::start_node);
+  // core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::start_node);
   connected_ = true;
   device_->set_entry(0x1017, 0x0, heartbeat_interval_,
                      kaco::WriteAccessMethod::sdo);
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
   std::cout << "New node started" << std::endl;
 }
 
-void MasterCAN::connect_node() {
+void MasterCAN::reset_node() {
   core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::reset_node);
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 };

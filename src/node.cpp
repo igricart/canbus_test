@@ -6,8 +6,8 @@ int main(int argc, char** argv) {
   MasterCAN master(nh);
 
   master.start();
+  master.reset_node();
   master.setup_node();
-  // master.reset_node();
 
   while (!master.connected()) {
     std::cout << "Master not conneceted to device. " << std::endl;

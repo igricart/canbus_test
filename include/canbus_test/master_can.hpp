@@ -30,7 +30,7 @@ class MasterCAN : public MasterCANInterface {
   std::mutex device_mutex_;
 
  private:
-  void configure_node(int node_id);
+  void start_node(int node_id);
 };
 
 MasterCAN::MasterCAN(ros::NodeHandle& nh) : MasterCANInterface(nh) {}
@@ -49,13 +49,15 @@ bool MasterCAN::start() {
 void MasterCAN::setup_node() {
   std::cout << "Setup Node" << std::endl;
 
+  // TODO: Node configuration outside of the alive callback
+
   auto device_dead_callback = [this](const uint8_t node_id) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
     std::lock_guard<std::mutex> lock(device_mutex_);
-    std::cout << "Device Dead Callback" << std::endl;
     // Check whether we already have this node_id
     if ((node_id == this->node_id_) && (connected_)) {
       try {
-        device_.reset();
+        // device_.reset();
         connected_ = false;
         /* code */
       } catch (const std::exception& e) {
@@ -66,12 +68,11 @@ void MasterCAN::setup_node() {
 
   auto device_alive_callback = [this, device_dead_callback](const int node_id) {
     std::lock_guard<std::mutex> lock(device_mutex_);
-    std::cout << "Device Alive Callback" << std::endl;
     if ((node_id == this->node_id_) && (!connected_)) {
       try {
-        configure_node(node_id);
-        core_.nmt.register_device_dead_callback(device_dead_callback);
+        start_node(node_id);
       } catch (const std::exception& e) {
+        connected_ = false;
         std::cerr << e.what() << '\n';
       }
     }
@@ -81,31 +82,25 @@ void MasterCAN::setup_node() {
     }
   };
 
+  core_.nmt.register_device_dead_callback(device_dead_callback);
   core_.nmt.register_device_alive_callback(device_alive_callback);
+  core_.nmt.register_new_device_callback(device_alive_callback);
 }
 
-void MasterCAN::configure_node(int node_id) {
-  core_.nmt.send_nmt_message(node_id_,
-                             kaco::NMT::Command::enter_preoperational);
+void MasterCAN::start_node(int node_id) {
   device_ = std::make_unique<kaco::Device>(core_, node_id);
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
   device_->load_dictionary_from_eds(ros::package::getPath("canbus_test") +
                                     "/resources/PC - Master.eds");
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
   std::cout << "Starting Node with ID " << (unsigned)node_id_ << "..."
             << std::endl;
-  device_->start();
-  create_pdo_mapping();
-  // core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::start_node);
+  core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::start_node);
+  // create_pdo_mapping();
   connected_ = true;
-  device_->set_entry(0x1017, 0x0, heartbeat_interval_,
-                     kaco::WriteAccessMethod::sdo);
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  std::cout << "New node started" << std::endl;
 }
 
 void MasterCAN::reset_node() {
   core_.nmt.send_nmt_message(node_id_, kaco::NMT::Command::reset_node);
+  connected_ = false;
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 };
 
@@ -140,7 +135,7 @@ bool MasterCAN::create_pdo_mapping() {
   try {
     std::cout << "Create PDO Mapping" << std::endl;
     // Receiver Ports
-    device_->add_receive_pdo_mapping(0x1A1,
+    device_->add_receive_pdo_mapping(0x180 + node_id_,
                                      "Digital_Inputs1_1/Digital_Inputs1_1", 0);
 
     // Transmission Ports
@@ -163,9 +158,8 @@ void MasterCAN::read() {
     return;
   }
   try {
-    auto value_1 =
-        device_->get_entry("Digital_Inputs1_1/Digital_Inputs1_1",
-                           kaco::ReadAccessMethod::pdo_request_and_wait);
+    auto value_1 = device_->get_entry(
+        0x3800, 0x01, kaco::ReadAccessMethod::pdo_request_and_wait);
     std::cout << "value_1 = " << value_1 << std::endl;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
@@ -183,12 +177,14 @@ void MasterCAN::send(u_int8_t i) {
 }
 
 void MasterCAN::communicate() {
-  std::lock_guard<std::mutex> lock(device_mutex_);
   bool running = true;
   u_int8_t i = 0;
   while (running) {
-    this->send(i);
-    this->read();
+    {
+      std::lock_guard<std::mutex> lock(device_mutex_);
+      // this->send(i);
+      // this->read();
+    }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(this->sample_rate_));
     ++i;
